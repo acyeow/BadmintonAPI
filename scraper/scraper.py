@@ -2,12 +2,15 @@ from seleniumwire import webdriver
 from bs4 import BeautifulSoup
 import csv
 import time
+import os
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
+from datetime import datetime
 
 RANKINGS_URL = 'https://badmintonranks.com/ranking/bwf'
+OUTPUT_DIR = 'ranking_data'
 
 EVENT_TYPES = [
     'Men\'s Single',
@@ -28,44 +31,51 @@ class Scraper:
         self.driver.implicitly_wait(15)
         self.driver.set_page_load_timeout(60)
 
+    def load_page(self):
+        """Load the rankings page initially"""
+        try:
+            print("Loading rankings page...")
+            self.driver.get(RANKINGS_URL)
+            time.sleep(3)
+            print("✓ Page loaded successfully")
+            return True
+        except Exception as e:
+            print(f"Error loading page: {e}")
+            return False
+
     def scrape_event_type(self, event_type):
         """Scrape data for a specific event type"""
         print(f"\n🎯 Scraping {event_type}...")
         
         try:
-            self.driver.get(RANKINGS_URL)
-            
-            print("Waiting for rankings to load...")
-
             # Wait for the dropdown to be clickable
             wait = WebDriverWait(self.driver, 15)
             
-            # Find and click the Type dropdown input
             dropdown = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input.el-input__inner[placeholder='Type']"))
             )
             dropdown.click()
-            time.sleep(1)  # Small delay for dropdown to open
+            time.sleep(1)
             
-            # Find and click the specific event option
-            # The options appear in a dropdown list, we need to find the one with matching text
             all_options = wait.until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".el-select-dropdown__item"))
             )
-            print(f"Found {len(all_options)} total elements with class el-select-dropdown__item")
 
+            # Filter for visible options
             visible_options = [opt for opt in all_options if opt.is_displayed()]
-            print(f"Found {len(visible_options)} VISIBLE dropdown options")
+            print(f"Found {len(visible_options)} visible dropdown options")
             
-            # Print the text of visible options for debugging
-            for i, opt in enumerate(visible_options):
-                print(f"  Option {i}: '{opt.text}'")
-            
+            clicked = False
             for option in visible_options:
                 if event_type in option.text:
                     option.click()
                     print(f"✓ Selected {event_type}")
+                    clicked = True
                     break
+            
+            if not clicked:
+                print(f"❌ Could not find option for '{event_type}'")
+                return None
 
             time.sleep(0.5)
             search_button = wait.until(
@@ -73,22 +83,31 @@ class Scraper:
             )
             search_button.click()
             
-            # Wait for table to reload with new data
-            time.sleep(3)  # Give it time to load new data
+            print("Waiting for table to reload...")
+            time.sleep(3)
             
-            # Get the page source
             html_data = self.driver.page_source
-            self.driver.quit()
             return html_data
             
         except Exception as e:
             print(f"Error selecting {event_type}: {e}")
-            self.driver.quit()
+            import traceback
+            traceback.print_exc()
             return None
+    
+    def close(self):
+        """Close the browser"""
+        try:
+            self.driver.quit()
+            print("\n✓ Browser closed")
+        except Exception as e:
+            print(f"Error closing browser: {e}")
 
-    def extract_player_data(self, soup):
+    def extract_player_data(self, soup, event_type):
         """Extract player data from table cells"""
         players = []
+
+        is_doubles = 'Double' in event_type
         
         # Find all table cells
         cells = soup.find_all('td', class_='el-table__cell')
@@ -115,12 +134,28 @@ class Scraper:
                 country_cell = row_cells[3].find('a', class_='link-type')
                 country = country_cell.get_text(strip=True) if country_cell else ''
                 
-                # Extract player name (column 5)
-                player_cell = row_cells[4].find('a', class_='link-type')
-                if player_cell:
-                    player_name = player_cell.find('span').get_text(strip=True) if player_cell.find('span') else ''
+                # Extract player name(s) (column 5)
+                player_cell = row_cells[4]
+                if is_doubles:
+                    # For doubles, extract both player names
+                    player_links = player_cell.find_all('a', class_='link-type')
+                    if len(player_links) >= 2:
+                        player1 = player_links[0].find('span').get_text(strip=True) if player_links[0].find('span') else ''
+                        player2 = player_links[1].find('span').get_text(strip=True) if player_links[1].find('span') else ''
+                        player_name = f"{player1} / {player2}"
+                    elif len(player_links) == 1:
+                        # Fallback: try to get the full text which includes both names
+                        full_text = player_cell.get_text(strip=True)
+                        player_name = full_text
+                    else:
+                        player_name = ''
                 else:
-                    player_name = ''
+                    # For singles, extract single player name
+                    player_link = player_cell.find('a', class_='link-type')
+                    if player_link:
+                        player_name = player_link.find('span').get_text(strip=True) if player_link.find('span') else ''
+                    else:
+                        player_name = ''
                 
                 # Extract points (column 6)
                 points_cell = row_cells[5].find('div', class_='cell')
@@ -152,13 +187,21 @@ class Scraper:
         
         return players
 
-    def save_to_csv(self, players, filename='badminton_rankings.csv'):
+    def save_to_csv(self, players, event_type):
         """Save player data to CSV file"""
         if not players:
             print("No data to save!")
             return
         
-        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+        # Create output directory if it doesn't exist
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # Create filename with event type and date
+        event_name = event_type.lower().replace("'", "").replace(" ", "_")
+        filename = f'{event_name}_rankings_{datetime.now().strftime("%Y-%m-%d")}.csv'
+        filepath = os.path.join(OUTPUT_DIR, filename)
+        
+        with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = ['Rank', 'Player Name', 'Country', 'Points', 'Tournaments', 'Last Update', 'Rank Change']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -166,27 +209,48 @@ class Scraper:
             for player in players:
                 writer.writerow(player)
         
-        print(f"✅ Saved {len(players)} players to {filename}")
+        print(f"✅ Saved {len(players)} players to {filepath}")
 
 if __name__ == '__main__':
-    # Initialize the scraper and scrape the data
+    # Initialize the scraper
     scraper = Scraper()
-    html_data = scraper.scrape_event_type('Men\'s Double')
     
-    if html_data:
-        # Parse HTML
-        soup = BeautifulSoup(html_data, 'html.parser')
+    try:
+        # Load the page once
+        if not scraper.load_page():
+            print("Failed to load page. Exiting...")
+            scraper.close()
+            exit(1)
         
-        # Extract player data
-        players = scraper.extract_player_data(soup)
+        # Scrape all event types
+        for event_type in EVENT_TYPES:
+            html_data = scraper.scrape_event_type(event_type)
+            
+            if html_data:
+                soup = BeautifulSoup(html_data, 'html.parser')
+                players = scraper.extract_player_data(soup, event_type)
+                
+                # Display first few players
+                print(f"📊 Found {len(players)} players")
+                if players:
+                    print("First 5 players:")
+                    for i, player in enumerate(players[:5], 1):
+                        print(f"  {i}. {player['Rank']}. {player['Player Name']} ({player['Country']}) - {player['Points']} pts")
+                    
+                    # Save to CSV
+                    scraper.save_to_csv(players, event_type)
+                else:
+                    print("⚠️  No players found")
+            else:
+                print(f"❌ Failed to scrape {event_type}")
+            
+            # Small delay between events
+            time.sleep(2)
         
-        # Display first few players
-        print(f"\n📊 Found {len(players)} players")
-        print("\nFirst 5 players:")
-        for i, player in enumerate(players[:5], 1):
-            print(f"{i}. {player['Rank']}. {player['Player Name']} ({player['Country']}) - {player['Points']} pts")
-        
-        # Save to CSV
-        scraper.save_to_csv(players)
-    else:
-        print("Failed to scrape data")
+        print("\n✅ All events scraped successfully!")
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        scraper.close()

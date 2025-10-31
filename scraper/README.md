@@ -1,4 +1,4 @@
-# Python scraper for scrapping badminton stats
+# Python Scraper for Scraping Badminton Stats
 
 ## Quickstart
 

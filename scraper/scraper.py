@@ -1,4 +1,3 @@
-# You would need to install this: pip install selenium-wire
 from seleniumwire import webdriver
 from bs4 import BeautifulSoup
 import csv
@@ -24,13 +23,11 @@ def scrape_with_selenium():
 
     try:
         driver.get(RANKINGS_URL)
+        
         print("Waiting for rankings to load...")
 
-        driver.implicitly_wait(15)  # Increased wait time
-        print(driver.page_source)
+        driver.implicitly_wait(15)
         data = driver.page_source
-        
-        # Close the browser
         driver.quit()
 
         return data

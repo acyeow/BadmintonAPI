@@ -1,2 +1,6 @@
 # Scraper environment
 scraper/venv/
+
+.env
+
+logs

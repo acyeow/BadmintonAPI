@@ -8,6 +8,11 @@
 python3 -m venv venv python=3.10.12
 ```
 
+### Activate the venv
+```
+source venv/bin/activate
+```
+
 ### Install requirements
 
 ```
